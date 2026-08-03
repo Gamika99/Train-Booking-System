@@ -57,3 +57,9 @@ logs/
 *.crt
 *.p12
 .secrets/
+
+# Seed credentials and sensitive data
+backend/src/scripts/seed.ts
+backend/src/scripts/*.ts
+!backend/src/scripts/*.example.ts
+*.seed.ts
