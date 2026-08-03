@@ -19,6 +19,19 @@ app.use(express.json());
 app.use(limiter);
 app.use('/api', routes);
 
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Train booking API is running',
+    endpoints: [
+      '/api/stations',
+      '/api/seats/available',
+      '/api/bookings',
+      '/api/bookings/:id/cancel'
+    ]
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });

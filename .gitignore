@@ -5,6 +5,9 @@ yarn-debug.log*
 yarn-error.log*
 
 # Environment variables
+backend/.env
+backend/src/.env
+frontend/.env
 .env
 .env.local
 .env.development.local

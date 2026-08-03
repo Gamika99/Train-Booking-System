@@ -32,7 +32,7 @@ const MyBookingsPage: React.FC = () => {
     try {
       const { data } = await apiService.getBookingsByEmail(emailToSearch);
       setBookings(data.data);
-      if (data.data.length === 0) toast.info('No bookings found');
+      if (data.data.length === 0) toast('No bookings found');
     } catch (error: any) {
       toast.error(error.message);
     } finally {

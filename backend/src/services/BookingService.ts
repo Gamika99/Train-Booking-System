@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { Booking, IBooking } from '../models/Booking';
+import { Coach } from '../models/Coach';
 import { Seat } from '../models/Seat';
 import { Station } from '../models/Station';
 
@@ -19,42 +20,36 @@ export class BookingService {
     fromStationId: string,
     toStationId: string
   ): Promise<boolean> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const fromStation = await Station.findById(fromStationId);
+    const toStation = await Station.findById(toStationId);
 
-    try {
-      const fromStation = await Station.findById(fromStationId).session(session);
-      const toStation = await Station.findById(toStationId).session(session);
-
-      if (!fromStation || !toStation) {
-        throw new Error('Station not found');
-      }
-
-      const overlappingBookings = await Booking.find({
-        seatId: new mongoose.Types.ObjectId(seatId),
-        status: 'confirmed',
-        $or: [
-          { fromStationId: { $gte: fromStationId }, toStationId: { $lte: toStationId } },
-          { fromStationId: { $lte: fromStationId }, toStationId: { $gte: toStationId } },
-          { fromStationId: { $lte: fromStationId }, toStationId: { $gte: fromStationId, $lte: toStationId } },
-          { fromStationId: { $gte: fromStationId, $lte: toStationId }, toStationId: { $gte: toStationId } },
-        ],
-      }).session(session);
-
-      await session.commitTransaction();
-      return overlappingBookings.length === 0;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
+    if (!fromStation || !toStation) {
+      throw new Error('Station not found');
     }
+
+    const [startOrder, endOrder] = fromStation.order <= toStation.order
+      ? [fromStation.order, toStation.order]
+      : [toStation.order, fromStation.order];
+
+    const overlappingBookings = await Booking.find({
+      seatId: new mongoose.Types.ObjectId(seatId),
+      status: 'confirmed',
+    }).populate('fromStationId').populate('toStationId');
+
+    const overlapping = overlappingBookings.some((booking) => {
+      const bookingFrom = booking.fromStationId as unknown as any;
+      const bookingTo = booking.toStationId as unknown as any;
+      if (!bookingFrom || !bookingTo) return false;
+
+      const bookingStart = Math.min(bookingFrom.order, bookingTo.order);
+      const bookingEnd = Math.max(bookingFrom.order, bookingTo.order);
+      return bookingStart <= endOrder && bookingEnd >= startOrder;
+    });
+
+    return !overlapping;
   }
 
   static async createBooking(request: BookingRequest): Promise<IBooking> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
       const isAvailable = await this.checkSeatAvailability(
         request.seatId,
@@ -66,8 +61,8 @@ export class BookingService {
         throw new Error('Seat is not available for the requested leg');
       }
 
-      const fromStation = await Station.findById(request.fromStationId).session(session);
-      const toStation = await Station.findById(request.toStationId).session(session);
+      const fromStation = await Station.findById(request.fromStationId);
+      const toStation = await Station.findById(request.toStationId);
 
       if (!fromStation || !toStation) {
         throw new Error('Station not found');
@@ -78,50 +73,45 @@ export class BookingService {
       const price = distance * basePrice;
 
       const booking = new Booking({ ...request, price, status: 'confirmed' });
-      await booking.save({ session });
+      await booking.save();
 
-      await Seat.findByIdAndUpdate(request.seatId, { isReserved: true }, { session });
+      await Seat.findByIdAndUpdate(request.seatId, { isReserved: true });
 
-      await session.commitTransaction();
       return booking;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 
   static async getAvailableSeats(fromStationId: string, toStationId: string): Promise<any[]> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const fromStation = await Station.findById(fromStationId);
+    const toStation = await Station.findById(toStationId);
 
-    try {
-      const reservedCoaches = await mongoose.model('Coach').find({ type: 'reserved' }).session(session);
-      const coachIds = reservedCoaches.map((c) => c._id);
-
-      const allSeats = await Seat.find({ coachId: { $in: coachIds } }).session(session);
-
-      const bookings = await Booking.find({
-        status: 'confirmed',
-        $or: [
-          { fromStationId: { $gte: fromStationId }, toStationId: { $lte: toStationId } },
-          { fromStationId: { $lte: fromStationId }, toStationId: { $gte: toStationId } },
-          { fromStationId: { $lte: fromStationId }, toStationId: { $gte: fromStationId, $lte: toStationId } },
-          { fromStationId: { $gte: fromStationId, $lte: toStationId }, toStationId: { $gte: toStationId } },
-        ],
-      }).session(session);
-
-      const bookedSeatIds = new Set(bookings.map((b) => b.seatId.toString()));
-      const availableSeats = allSeats.filter((seat) => !bookedSeatIds.has(seat._id.toString()));
-
-      await session.commitTransaction();
-      return availableSeats;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
+    if (!fromStation || !toStation) {
+      throw new Error('Station not found');
     }
+
+    const reservedCoaches = await Coach.find({ type: 'reserved' });
+    const coachIds = reservedCoaches.map((c) => c._id);
+
+    const allSeats = await Seat.find({ coachId: { $in: coachIds } });
+    const bookings = await Booking.find({ status: 'confirmed' }).populate('fromStationId').populate('toStationId');
+
+    const bookedSeatIds = new Set(
+      bookings
+        .filter((booking) => {
+          const bookingFrom = booking.fromStationId as unknown as any;
+          const bookingTo = booking.toStationId as unknown as any;
+          if (!bookingFrom || !bookingTo) return false;
+          const startOrder = Math.min(fromStation.order, toStation.order);
+          const endOrder = Math.max(fromStation.order, toStation.order);
+          const bookingStart = Math.min(bookingFrom.order, bookingTo.order);
+          const bookingEnd = Math.max(bookingFrom.order, bookingTo.order);
+          return bookingStart <= endOrder && bookingEnd >= startOrder;
+        })
+        .map((booking) => booking.seatId.toString())
+    );
+
+    return allSeats.filter((seat) => !bookedSeatIds.has(seat._id.toString()));
   }
 }

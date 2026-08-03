@@ -3,7 +3,29 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import Select from 'react-select';
 import { apiService, Station, Seat } from '../services/api';
-import SeatMap from '../components/SeatMap';
+// Inline lightweight SeatMap component to avoid missing external module
+type SeatMapProps = {
+  seats: Seat[];
+  selectedSeat: Seat | null;
+  onSeatSelect: (s: Seat) => void;
+};
+
+const SeatMap: React.FC<SeatMapProps> = ({ seats, selectedSeat, onSeatSelect }) => {
+  return (
+    <div className="grid grid-cols-4 gap-3">
+      {seats.map((s) => (
+        <button
+          key={s._id}
+          onClick={() => onSeatSelect(s)}
+          className={`p-3 border rounded text-sm ${selectedSeat?._id === s._id ? 'bg-blue-600 text-white' : 'bg-white'}`}
+          aria-pressed={selectedSeat?._id === s._id}
+        >
+          {s.seatNumber}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 const BookingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -20,25 +42,41 @@ const BookingPage: React.FC = () => {
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    apiService.getStations().then(({ data }) => setStations(data.data)).catch(() => toast.error('Failed to load stations'));
+    apiService.getStations()
+      .then(({ data }) => {
+        const stationList = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        setStations(stationList);
+      })
+      .catch(() => toast.error('Failed to load stations'));
   }, []);
 
   const stationOptions = stations.map((s) => ({ value: s._id, label: `${s.name} (${s.code})` }));
 
+  const getStationValue = (station: any) => {
+    if (!station) return null;
+    if (typeof station === 'string') return station;
+    if (station.value) return station.value;
+    return station._id || null;
+  };
+
   const handleSearchSeats = async () => {
-    if (!fromStation || !toStation || fromStation.value === toStation.value) {
+    const fromValue = getStationValue(fromStation);
+    const toValue = getStationValue(toStation);
+
+    if (!fromValue || !toValue || fromValue === toValue) {
       toast.error('Please select valid origin and destination');
       return;
     }
 
     setSearching(true);
     try {
-      const { data } = await apiService.getAvailableSeats(fromStation.value, toStation.value);
-      setAvailableSeats(data.data);
+      const { data } = await apiService.getAvailableSeats(fromValue, toValue);
+      const seats = Array.isArray(data?.data) ? data.data : [];
+      setAvailableSeats(seats);
       setSelectedSeat(null);
-      data.data.length === 0 ? toast.info('No seats available') : toast.success(`Found ${data.data.length} seats`);
+      seats.length === 0 ? toast('No seats available') : toast.success(`Found ${seats.length} seats`);
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || 'Failed to fetch available seats');
     } finally {
       setSearching(false);
     }
@@ -54,8 +92,8 @@ const BookingPage: React.FC = () => {
     try {
       await apiService.createBooking({
         seatId: selectedSeat._id,
-        fromStationId: fromStation.value,
-        toStationId: toStation.value,
+        fromStationId: getStationValue(fromStation),
+        toStationId: getStationValue(toStation),
         passengerName,
         passengerEmail,
         passengerPhone,

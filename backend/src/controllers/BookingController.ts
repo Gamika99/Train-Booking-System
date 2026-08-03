@@ -21,10 +21,12 @@ export class BookingController {
       if (!fromStationId || !toStationId) {
         return res.status(400).json({ success: false, error: 'fromStationId and toStationId are required' });
       }
+
       const seats = await BookingService.getAvailableSeats(fromStationId as string, toStationId as string);
-      res.json({ success: true, data: seats });
-    } catch (error) {
-      res.status(500).json({ success: false, error: 'Failed to fetch available seats' });
+      return res.json({ success: true, data: seats });
+    } catch (error: any) {
+      console.error('getAvailableSeats error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Failed to fetch available seats' });
     }
   }
 
